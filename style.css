@@ -1,0 +1,292 @@
+body {
+  margin: 0 auto;
+  font-family: Arial, sans-serif;
+  background: #ffffff;
+  color: #333333;
+  width: 500px;
+  margin-top: 0;
+}
+
+.extension-container {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.tab-bar {
+  display: flex;
+  border-bottom: 1px solid #ddd;
+}
+
+.tab {
+  flex: 1;
+  padding: 10px;
+  font-size: 12px;
+  text-transform: uppercase;
+  background: #f5f5f5;
+  border: none;
+  cursor: pointer;
+}
+
+.tab.active {
+  background: #ffffff;
+  color: #287FBA;
+  font-weight: bold;
+  border-bottom: 2px solid #287FBA;
+}
+
+.tab-panel {
+  display: none;
+  padding: 12px;
+}
+
+.tab-panel.active {
+  display: block;
+}
+
+.description {
+  font-size: 12px;
+  color: #777;
+}
+
+.action-bar {
+  display: flex;
+  align-items: center;
+  margin: 10px 0;
+}
+
+.primary-btn {
+  background: #287FBA;
+  color: #fff;
+  border: none;
+  border-radius: 2px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.primary-btn:disabled {
+  background: #aaa;
+  cursor: not-allowed;
+}
+
+.status {
+  margin-left: 10px;
+  font-size: 12px;
+  color: #666;
+}
+
+.result-box {
+  border: 1px solid #ddd;
+  padding: 10px;
+  margin-top: 10px;
+  font-size: 14px;
+  white-space: pre-line;
+}
+
+.result-box.empty {
+  color: #888;
+}
+
+textarea {
+  width: 100%;
+  resize: none;
+  padding: 8px;
+  font-size: 13px;
+  border: 1px solid #d3d3d3;
+  box-sizing: border-box;
+}
+
+textarea:focus {
+  outline: none;
+  border-color: #287FBA;
+}
+
+.chat-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 5px;
+}
+
+#charCount {
+  font-size: 12px;
+  color: #666;
+}
+
+.browser-demo-frame {
+  width: 420px;
+  height: 600px;
+  margin: 20px auto;
+  border: 1px solid #cfcfcf;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+  background: #f9f9f9;
+  padding: 8px;
+  box-sizing: border-box;
+}
+
+.extension-container {
+  width: 100%;
+  height: 100%;
+  background: #ffffff;
+  border-radius: 4px;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.tab-bar {
+  display: flex;
+  border-bottom: 1px solid #ddd;
+  background: #f5f5f5;
+}
+
+.tab {
+  flex: 1;
+  padding: 10px;
+  font-size: 12px;
+  text-transform: uppercase;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: #666;
+}
+
+.tab.active {
+  background: #ffffff;
+  color: #287FBA;
+  font-weight: bold;
+  border-bottom: 2px solid #287FBA;
+}
+
+
+.badge {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+.badge.warning {
+  background: #fff4d6;
+  color: #8a6d1d;
+  border: 1px solid #e6c77b;
+}
+
+
+.result-box {
+  border: 1px solid #e0e0e0;
+  padding: 12px;
+  margin-top: 12px;
+  font-size: 14px;
+  white-space: pre-line;
+  border-radius: 4px;
+  background: #fafafa;
+}
+
+.result-box.empty {
+  color: #888;
+  font-style: italic;
+}
+
+
+.action-bar {
+  display: flex;
+  align-items: center;
+  margin: 12px 0;
+  gap: 10px;
+}
+
+.primary-btn {
+  background: #287FBA;
+  color: #fff;
+  border: none;
+  border-radius: 3px;
+  padding: 6px 14px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.primary-btn:hover:not(:disabled) {
+  background: #1f6fa5;
+}
+
+.primary-btn:disabled {
+  background: #a8a8a8;
+  cursor: not-allowed;
+}
+
+
+textarea {
+  width: 100%;
+  resize: none;
+  padding: 8px;
+  font-size: 13px;
+  border: 1px solid #d3d3d3;
+  border-radius: 3px;
+  box-sizing: border-box;
+}
+
+textarea:focus {
+  outline: none;
+  border-color: #287FBA;
+}
+
+
+.ai-context {
+  font-size: 12px;
+  color: #555;
+  background: #f3f8fc;
+  border: 1px solid #d6e6f2;
+  padding: 6px 10px;
+  border-radius: 4px;
+  margin-bottom: 8px;
+}
+
+.result-box h4 {
+  margin-top: 12px;
+  color: #287FBA;
+}
+
+.result-box ul {
+  margin-left: 16px;
+}
+
+
+.ai-answer-label {
+  font-size: 11px;
+  color: #287FBA;
+  font-weight: bold;
+  margin-bottom: 4px;
+}
+
+.ai-footer {
+  font-size: 11px;
+  color: #999;
+  margin-top: 10px;
+  text-align: center;
+}
+
+/* Compact AI analysis layout */
+.result-box strong {
+  display: block;
+  /* margin-top: 6px;
+  margin-bottom: 2px; */
+  margin: 0;
+}
+
+.result-box ul {
+  margin: 0 0 0 14px; /* top right bottom left */
+  padding: 0;
+      margin-block-start: 0;
+    margin-block-end: 0;
+}
+
+.result-box li {
+  margin: 2px 0;
+  line-height: 1;
+}
+
+.primary-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest manifest-version="0.1" xmlns="http://www.tableau.com/xml/extension_manifest">
+  <dashboard-extension id="com.trungnghia.ai" extension-version="0.1.0">
+    <default-locale>en_US</default-locale>
+    <name resource-id="name"/>
+    <description>AI Chat for Bug Report</description>
+    <author name="Trung Nghia" email="nghia.pham@hitachids.com" organization="Personal" website="https://www.trungnghia-tableau.com"/>
+    <min-api-version>1.0</min-api-version>
+    <source-location>
+      <url>http://localhost:5000/index.html</url>
+    </source-location>
+    <icon></icon>
+    <permissions>
+      <permission>full data</permission> 
+    </permissions>
+  </dashboard-extension>
+  <resources>
+    <resource id="name">
+      <text locale="en_US">AI Analyst</text>
+    </resource>
+  </resources>
+</manifest>

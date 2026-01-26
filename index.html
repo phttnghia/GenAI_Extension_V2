@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <title>Tableau AI Extension Demo</title>
+    <link rel="stylesheet" href="style.css" />
+</head>
+
+<body>
+    <div class="browser-demo-frame">
+        <div class="extension-container">
+
+            <!-- Tabs -->
+            <div class="tab-bar">
+                <button class="tab active" data-tab="analyze">📊Analyze Report</button>
+                <button class="tab" data-tab="chat">🧠AI Assistant</button>
+            </div>
+
+            <!-- Content -->
+            <div class="tab-content">
+
+                <!-- Analyze Report -->
+                <div id="analyze" class="tab-panel active">
+                    <h3>📊 AI-Generated Dashboard Insights</h3>
+                    <p class="description">
+                        Select filters on your dashboard and click Analyze to generate insights.
+                    </p>
+
+                    <div class="action-bar">
+                        <button id="analyzeBtn" class="primary-btn"> ▶ Analyze Data</button>
+                        <span id="statusText" class="status">AI ready for analysis</span>
+                    </div>
+                    <div class="ai-context">
+                    🤖 AI-generated insights based on current dashboard filters
+                    </div>
+                    <div id="analyzeResult" class="result-box empty">
+                        No analysis generated yet. Apply filters and click Analyze.
+                    </div>
+                </div>
+
+                <!-- Chatbox -->
+                <div id="chat" class="tab-panel">
+                    <h3>🧠 AI Assistant</h3>
+                    <p class="description">
+                    Ask AI to analyze trends, risks, and anomalies in this dashboard.
+                    </p>
+
+                    <textarea id="chatInput" rows="2"
+                        placeholder="Ask a specific question about this data..."></textarea>
+
+                    <div class="chat-actions">
+                        <span id="charCount">0 / 500</span>
+                        <button id="sendBtn" class="primary-btn" disabled>
+                        ➤ Send
+                        </button>
+
+
+                    </div>
+                    <div class="ai-answer-label">
+                        AI Response
+                    </div>
+
+                    <div id="chatResult" class="result-box empty">
+                        No response yet.
+                    </div>
+                    <div class="ai-footer">
+                    Powered by enterprise-grade AI · Responses may require human validation
+                    </div>
+
+                </div>
+
+            </div>
+        </div>
+    </div>
+    <script src="app.js"></script>
+</body>
+
+</html>
