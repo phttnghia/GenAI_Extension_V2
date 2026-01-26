@@ -2,6 +2,8 @@ from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import openai
 import os
+import json
+
 
 
 current_directory = os.path.dirname(os.path.abspath(__file__))
@@ -25,6 +27,12 @@ def serve_static(path):
 @app.route('/ask-ai', methods=['POST'])
 def ask_ai():
     data = request.json
+    # --- THÊM ĐOẠN NÀY ĐỂ DEBUG ---
+    print("----- RECEIVED PAYLOAD -----")
+    # In toàn bộ JSON ra màn hình console của Python, format đẹp dễ nhìn
+    print(json.dumps(data, indent=4, ensure_ascii=False)) 
+    print("----------------------------")
+    # ------------------------------
     user_question = data.get('question')
     chart_data = data.get('context_data')
 
