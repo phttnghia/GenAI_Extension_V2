@@ -1,6 +1,5 @@
 // --- CẤU HÌNH ---
-const MAIN_SHEET_NAME = "Line_Chart"; // Đảm bảo tên này khớp với sheet trên Dashboard
-const PERIOD_PARAM_NAME = "Input Period"; 
+const MAIN_SHEET_NAME = "Line_Chart"; 
 
 // --- KHỞI TẠO ---
 let dashboard;
@@ -8,133 +7,132 @@ tableau.extensions.initializeAsync().then(() => {
     dashboard = tableau.extensions.dashboardContent.dashboard;
     console.log("✅ Extension initialized");
     
+    // 1. Gắn sự kiện cho nút ANALYZE (Report)
     const analyzeBtn = document.getElementById("analyzeBtn");
-    if(analyzeBtn) analyzeBtn.addEventListener("click", handleAnalyzeSmart);
+    if(analyzeBtn) {
+        analyzeBtn.addEventListener("click", () => handleProcess("Analyze_Data"));
+    }
+
+    // 2. Gắn sự kiện cho nút SEND (Chat AI)
+    const sendBtn = document.getElementById("sendBtn");
+    if(sendBtn) {
+        sendBtn.addEventListener("click", () => handleProcess("AI_Assistant"));
+    }
 });
 
-// --- HÀM XỬ LÝ CHÍNH ---
-async function handleAnalyzeSmart() {
-    const statusText = document.getElementById("statusText");
-    const analyzeResult = document.getElementById("analyzeResult");
+// --- HÀM XỬ LÝ CHUNG (Nhận tham số modeType) ---
+async function handleProcess(modeType) {
+    // Xác định vùng hiển thị kết quả dựa trên Mode
+    const isChatMode = (modeType === "AI_Assistant");
     
-    try {
-        statusText.textContent = "Scanning Dashboard...";
-        analyzeResult.innerHTML = "⏳ Đang phân tích dữ liệu thực tế...";
+    // Lấy các element UI tương ứng
+    const statusText = document.getElementById("statusText"); // Text trạng thái chung
+    
+    // Nếu là Chat Mode thì hiển thị kết quả vào ô chat, ngược lại vào ô Analyze
+    const resultContainer = isChatMode 
+        ? document.getElementById("chatResult") 
+        : document.getElementById("analyzeResult");
 
-        // 1. Lấy Filter thô từ API (Cái này đang bị lỗi All)
+    // Lấy câu hỏi của User (Chỉ dùng nếu là AI Assistant)
+    const userQuestion = isChatMode 
+        ? document.getElementById("chatInput").value 
+        : "";
+
+    try {
+        if(statusText) statusText.textContent = `Processing ${modeType}...`;
+        if(resultContainer) {
+            resultContainer.innerHTML = "⏳ Đang thu thập dữ liệu & phân tích...";
+            resultContainer.classList.remove("empty");
+        }
+
+        // --- BƯỚC 1: LẤY DỮ LIỆU DASHBOARD (Dùng chung cho cả 2 mode) ---
+        
+        // 1.1 Lấy Filter thô
         const rawFilters = await getRawFilters();
 
-        // 2. Lấy dữ liệu thực tế từ biểu đồ để Cross-check
-        // (Đây là bước fix lỗi "All")
+        // 1.2 Cross-check để lấy giá trị thực (Fix lỗi All)
         const finalFilters = await enrichFiltersWithData(rawFilters);
 
-        // 3. Lấy Parameter Period
+        // 1.3 Lấy Parameter Period (Nếu có)
         const params = await dashboard.getParametersAsync();
-        const periodParam = params.find(p => p.name === PERIOD_PARAM_NAME);
+        const periodParam = params.find(p => p.name === "Input Period"); 
         const periodValue = periodParam ? periodParam.currentValue.formattedValue : "N/A";
-        const periodData = await getPeriodData(); // Gọi hàm mới
 
-        // 4. Đóng gói
+        // --- BƯỚC 2: ĐÓNG GÓI PAYLOAD ---
+        // Xử lý period (format YYYY-MM-DD)
+        const today = new Date();
+        const start_date = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]; // 7 ngày trước
+        const end_date = today.toISOString().split('T')[0]; // Hôm nay
+        
         const payload = {
             "request_meta": { 
-                "request_id": "req_" + Date.now(),
-                "timestamp": new Date().toISOString(),
-                "mode_type": "Analyze Report"
+                // request_id & timestamp sẽ được server tạo lại
+                "mode_type": modeType === "Analyze_Data" ? "Analyze Report" : "AI Assistant"
             },
-            "period": periodData,
-            "filters": finalFilters
+            "period": {
+                "start_date": start_date,
+                "end_date": end_date
+            },
+            "filters": finalFilters,
+            "mode_type": modeType === "Analyze_Data" ? "Analyze Report" : "AI Assistant"
         };
-
-        // --- HIỂN THỊ DEBUG (Để bạn kiểm tra xem đã mất chữ All chưa) ---
-        let debugHtml = `<div style="text-align:left; font-size:12px;">`;
-        for (const [key, val] of Object.entries(finalFilters)) {
-            // Tô màu xanh nếu lấy được giá trị cụ thể, màu xám nếu vẫn là All
-            const color = (val === "(All)" || val[0] === "(All)") ? "#888" : "#007bff; font-weight:bold";
-            debugHtml += `<div>• ${key}: <span style="color:${color}">${Array.isArray(val) ? val.join(", ") : val}</span></div>`;
-        }
-        debugHtml += `</div>`;
         
-        analyzeResult.innerHTML = debugHtml;
-        statusText.textContent = "Sending to AI...";
+        // Thêm user_question nếu là Chat mode
+        if(isChatMode && userQuestion) {
+            payload.user_question = userQuestion;
+        }
 
-        // 5. Gửi sang Backend (Agent AI)
-        // await sendToBackend(payload); // Bỏ comment dòng này khi chạy thật
+        // Debug log
+        console.log(`📤 Sending payload [${modeType}]:`, payload);
+
+        // --- BƯỚC 3: GỬI SANG BACKEND ---
+        console.log("🚀 Gửi request tới /ask-ai...");
+        const backendResponse = await sendToBackend(payload);
+        
+        console.log("📥 Response từ backend:", backendResponse);
+        
+        // --- HIỂN THỊ TRONG DEBUG PANEL ---
+        const debugPanel = document.getElementById("debugPanel");
+        if(debugPanel) {
+            debugPanel.textContent = JSON.stringify(backendResponse.data || backendResponse, null, 2);
+        }
+        
+        // --- BƯỚC 4: HIỂN THỊ KẾT QUẢ (Bao gồm JSON debug) ---
+        let displayHtml = `
+            <div style="text-align:left;">
+                <div style="background:#e3f2fd; padding:10px; margin-bottom:10px; border-left:4px solid #2196F3;">
+                    ${backendResponse.answer || ""}
+                </div>
+        `;
+        
+        // Hiển thị JSON response đầy đủ
+        if(backendResponse.data) {
+            displayHtml += `
+                <details open style="background:#f5f5f5; padding:10px; margin-top:10px; border-radius:4px;">
+                    <summary style="cursor:pointer; font-weight:bold; color:#333;">
+                        📋 JSON Response (DEBUG)
+                    </summary>
+                    <pre style="background:#fff; border:1px solid #ddd; padding:10px; overflow-x:auto; font-size:11px; margin-top:8px;">
+${JSON.stringify(backendResponse.data, null, 2)}
+                    </pre>
+                </details>
+            `;
+        }
+        
+        displayHtml += `</div>`;
+        
+        if(resultContainer) resultContainer.innerHTML = displayHtml;
+        if(statusText) statusText.textContent = "✅ Completed";
 
     } catch (err) {
         console.error(err);
-        analyzeResult.innerHTML = `<span style="color:red">Lỗi: ${err.message}</span>`;
-        statusText.textContent = "Failed";
-    }
-}
-// ... (Các phần cấu hình và init giữ nguyên)
-
-// --- HÀM MỚI: TỰ ĐỘNG TÍNH PERIOD TỪ DỮ LIỆU ---
-async function getPeriodData() {
-    try {
-        const sheet = dashboard.worksheets.find(w => w.name === MAIN_SHEET_NAME);
-        if (!sheet) return { "start_date": "", "end_date": "" };
-
-        // Lấy toàn bộ dữ liệu đang hiển thị
-        const summary = await sheet.getSummaryDataAsync({ maxRows: 0 });
-        const data = summary.data;
-        const columns = summary.columns;
-
-        // 1. Tìm cột chứa dữ liệu Ngày tháng
-        // Ưu tiên tìm cột có kiểu dữ liệu là 'date' hoặc 'date-time'
-        // Hoặc tìm theo tên field của bạn: "Min_Date", "Max_Date"
-        let dateColIndex = columns.findIndex(c => c.dataType === 'date' || c.dataType === 'date-time');
-
-        // Nếu không tìm thấy cột Date chuẩn, thử tìm theo tên Calculated Field bạn vừa tạo
-        if (dateColIndex === -1) {
-            dateColIndex = columns.findIndex(c => c.fieldName.includes("Min_Date") || c.fieldName.includes("Date"));
-        }
-
-        if (dateColIndex === -1 || data.length === 0) {
-            console.warn("⚠️ Không tìm thấy cột Date để tính Period");
-            return { "start_date": "", "end_date": "" };
-        }
-
-        // 2. Quét toàn bộ dữ liệu để tìm Min và Max thực sự
-        // Lưu ý: Dữ liệu Tableau trả về có thể chưa sort
-        let minTime = Infinity;
-        let maxTime = -Infinity;
-
-        data.forEach(row => {
-            const cellValue = row[dateColIndex].value; // Giá trị gốc (thường là chuỗi chuẩn hoặc timestamp)
-            const timestamp = new Date(cellValue).getTime(); // Convert sang số để so sánh
-
-            if (!isNaN(timestamp)) {
-                if (timestamp < minTime) minTime = timestamp;
-                if (timestamp > maxTime) maxTime = timestamp;
-            }
-        });
-
-        // 3. Format lại thành chuỗi "MM/DD/YYYY" như bạn muốn
-        if (minTime === Infinity || maxTime === -Infinity) {
-            return { "start_date": "", "end_date": "" };
-        }
-
-        const formatDate = (ts) => {
-            const d = new Date(ts);
-            const month = ("0" + (d.getMonth() + 1)).slice(-2);
-            const day = ("0" + d.getDate()).slice(-2);
-            const year = d.getFullYear();
-            return `${month}/${day}/${year}`;
-        };
-
-        return {
-            "start_date": formatDate(minTime),
-            "end_date": formatDate(maxTime)
-        };
-
-    } catch (e) {
-        console.error("Lỗi tính Period:", e);
-        return { "start_date": "Error", "end_date": "Error" };
+        if(resultContainer) resultContainer.innerHTML = `<span style="color:red">Lỗi: ${err.message}</span>`;
+        if(statusText) statusText.textContent = "Failed";
     }
 }
 
-// ... (Các hàm getRawFilters, enrichFiltersWithData giữ nguyên code cũ)
-// --- HÀM 1: LẤY FILTER THÔ (Giữ nguyên logic cũ) ---
+// ... (Giữ nguyên các hàm getRawFilters và enrichFiltersWithData ở dưới)
+// --- HÀM 1: LẤY FILTER THÔ (Giữ nguyên) ---
 async function getRawFilters() {
     const sheet = dashboard.worksheets.find(w => w.name === MAIN_SHEET_NAME);
     if (!sheet) throw new Error(`Không tìm thấy sheet: ${MAIN_SHEET_NAME}`);
@@ -143,7 +141,6 @@ async function getRawFilters() {
     const filterMap = {};
     
     filters.forEach(f => {
-        // Chỉ lấy các filter chính (Bỏ Measure Names)
         if (f.fieldName !== "Measure Names" && f.fieldName !== "Metric Name Set") {
              if (f.isAllSelected) {
                 filterMap[f.fieldName] = ["(All)"];
@@ -155,69 +152,58 @@ async function getRawFilters() {
     return filterMap;
 }
 
-// --- HÀM 2: CROSS-CHECK DỮ LIỆU (FIX LỖI ALL) ---
-// --- HÀM 2: CROSS-CHECK DỮ LIỆU (BẢN NÂNG CẤP) ---
+// --- HÀM 2: CROSS-CHECK DỮ LIỆU (Giữ nguyên) ---
 async function enrichFiltersWithData(currentFilters) {
     const sheet = dashboard.worksheets.find(w => w.name === MAIN_SHEET_NAME);
-    
-    // Lấy dữ liệu
     const summary = await sheet.getSummaryDataAsync({ maxRows: 0 }); 
     const data = summary.data;
     const columns = summary.columns;
 
-    // --- DEBUG: In ra danh sách cột thực tế Extension nhìn thấy ---
-    // (Bấm F12 -> Console để xem danh sách này)
-    console.log("📊 CÁC CỘT DỮ LIỆU TÌM THẤY TRONG LINE_CHART:");
-    columns.forEach(c => console.log(` - ${c.fieldName}`));
-    console.log("------------------------------------------------");
+    // console.log("📊 COLUMNS FOUND:", columns.map(c => c.fieldName));
 
-    // Duyệt qua từng Filter
     for (const [filterName, filterValue] of Object.entries(currentFilters)) {
-        
-        // Chỉ xử lý nếu đang là (All)
         if (filterValue[0] === "(All)") {
-            
-            // 1. TÌM CỘT TƯƠNG ỨNG (Logic tìm kiếm mờ - Fuzzy Match)
-            // Tableau hay thêm [] hoặc ATTR() vào tên cột, nên cần so sánh tương đối
             const colIndex = columns.findIndex(c => {
-                const dbName = c.fieldName.replace(/[\[\]]/g, ""); // Bỏ dấu []
+                const dbName = c.fieldName.replace(/[\[\]]/g, ""); 
                 const fName = filterName.replace(/[\[\]]/g, "");
                 return dbName === fName || dbName.includes(fName); 
             });
             
             if (colIndex !== -1 && data.length > 0) {
                 const uniqueValues = new Set();
-                
-                // Quét 500 dòng đầu
                 const limit = Math.min(data.length, 500); 
                 for (let i = 0; i < limit; i++) {
                     uniqueValues.add(data[i][colIndex].formattedValue);
                 }
 
-                // Nếu chỉ tìm thấy 1 giá trị duy nhất -> Đó là giá trị đang Filter
                 if (uniqueValues.size === 1) {
                     currentFilters[filterName] = Array.from(uniqueValues);
-                    console.log(`✅ Đã fix filter "${filterName}" -> ${Array.from(uniqueValues)}`);
-                } 
-                // Logic bổ sung: Nếu tìm thấy ít hơn 10 giá trị, lấy luôn list đó
-                else if (uniqueValues.size > 1 && uniqueValues.size < 10) {
+                } else if (uniqueValues.size > 1 && uniqueValues.size < 10) {
                     currentFilters[filterName] = Array.from(uniqueValues);
                 }
-            } else {
-                console.warn(`⚠️ Không tìm thấy cột dữ liệu cho filter: "${filterName}". Hãy kéo field này vào Tooltip của Line_Chart!`);
             }
         }
     }
-    
     return currentFilters;
 }
 
-// Hàm gửi backend (để tạm đây)
+// Hàm gửi backend
 async function sendToBackend(payload) {
-    const res = await fetch("http://localhost:5000/ask-ai", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-    });
-    return await res.json();
+    try {
+        const res = await fetch("http://localhost:5000/ask-ai", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        });
+        
+        if (!res.ok) {
+            throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+        }
+        
+        const data = await res.json();
+        return data;
+    } catch (err) {
+        console.error("❌ Backend error:", err);
+        throw new Error(`Failed to reach backend: ${err.message}`);
+    }
 }

@@ -115,7 +115,7 @@ textarea:focus {
 
 .browser-demo-frame {
   width: 420px;
-  height: 600px;
+  height: auto;
   margin: 20px auto;
   border: 1px solid #cfcfcf;
   border-radius: 6px;
