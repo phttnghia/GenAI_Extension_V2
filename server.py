@@ -6,16 +6,19 @@ import os
 import json
 from datetime import datetime
 import uuid
-from config.settings import settings  # Load từ .env & settings.py
+# from config.settings import settings # (Bỏ comment khi chạy thật)
+
+# --- MOCK SETTINGS (Dùng tạm để code chạy được ngay, bạn thay bằng import settings nhé) ---
+class settings:
+    AZURE_SQL_SERVER = 'your-server.database.windows.net'
+    AZURE_SQL_DATABASE = 'your-database'
+    AZURE_SQL_USER = 'your-email'
+    AZURE_SQL_PASSWORD = 'your-password'
+    AZURE_SQL_DRIVER = '{ODBC Driver 17 for SQL Server}'
+    AZURE_CONNECT_TIMEOUT = 30
 
 app = Flask(__name__, static_folder=os.path.dirname(os.path.abspath(__file__)))
 CORS(app)
-
-print(f"✅ Settings loaded:")
-print(f"   Server: {settings.AZURE_SQL_SERVER}")
-print(f"   Database: {settings.AZURE_SQL_DATABASE}")
-print(f"   User: {settings.AZURE_SQL_USER}")
-print(f"   Driver: {settings.AZURE_SQL_DRIVER}")
 
 # ==============================================================================
 # 1. CẤU HÌNH
@@ -75,39 +78,27 @@ def get_iso_timestamp():
 # ==============================================================================
 def get_db_connection():
     try:
-        # Sử dụng Basic Authentication (username/password)
+        # Authentication=ActiveDirectoryInteractive (Dùng cho MFA)
+        # Authentication=SqlPassword (Dùng cho user/pass thường)
         conn_str = (
             f"Driver={settings.AZURE_SQL_DRIVER};"
             f"Server={settings.AZURE_SQL_SERVER};"
             f"Database={settings.AZURE_SQL_DATABASE};"
             f"UID={settings.AZURE_SQL_USER};"
-            f"PWD={settings.AZURE_SQL_PASSWORD};"
-            f"Connection Timeout={settings.AZURE_CONNECT_TIMEOUT};"
+            "Authentication=ActiveDirectoryInteractive;" # <--- QUAN TRỌNG: Để dòng này nếu dùng MFA
         )
-        print(f"🔌 Connecting to: {settings.AZURE_SQL_SERVER}/{settings.AZURE_SQL_DATABASE}")
-        conn = pyodbc.connect(conn_str)
-        print("✅ Connected successfully!")
-        return conn
+        return pyodbc.connect(conn_str)
     except Exception as e:
         print(f"❌ Database Connection Error: {e}")
         raise e
 
 # ==============================================================================
-# 3. BUILD QUERY (Lấy 3 cột chính: date, metric_name, metric_value)
+# 3. BUILD QUERY (Sửa lại: Chỉ lấy 3 cột chính để Pivot)
 # ==============================================================================
 def build_query(filters, period_start, period_end):
-    """
-    Xây dựng SQL query động dựa trên filters
-    
-    Args:
-        filters: Dict {filter_name: value(s)}
-        period_start: YYYY-MM-DD
-        period_end: YYYY-MM-DD
-    
-    Returns:
-        (sql_query, params_list)
-    """
-    # SELECT 3 cột chính theo mô hình EAV (Entity-Attribute-Value)
+    # Thay vì select cột động, ta select 3 cột cố định của mô hình EAV
+    # Giả sử tên cột trong view là: report_date, metric_name, metric_value
+    # Bạn cần sửa lại tên cột này cho đúng với View thật của bạn
     sql = f"""
         SELECT 
             report_date as date, 
@@ -119,45 +110,30 @@ def build_query(filters, period_start, period_end):
     
     params = []
 
-    # 1. Xử lý Period (Date Range)
+    # 1. Period
     if period_start and period_end:
         sql += " AND report_date BETWEEN ? AND ?"
         params.append(period_start)
         params.append(period_end)
-        print(f"   📅 Period: {period_start} to {period_end}")
 
-    # 2. Xử lý Filters
-    print(f"   🔍 Processing {len(filters)} filters:")
-    for filter_name, filter_value in filters.items():
-        # Bỏ qua filter với giá trị (All) hoặc rỗng
-        if not filter_value or filter_value == "(All)" or (isinstance(filter_value, list) and (len(filter_value) == 0 or "(All)" in filter_value)):
-            print(f"      - {filter_name}: SKIPPED (All or empty)")
-            continue
+    # 2. Filters
+    for ui_filter_name, filter_values in filters.items():
+        db_column = FILTER_COLUMN_MAPPING.get(ui_filter_name)
         
-        # Tìm mapping từ filter name sang column name
-        db_column = FILTER_COLUMN_MAPPING.get(filter_name)
-        if not db_column:
-            print(f"      - {filter_name}: NO MAPPING (skipped)")
-            continue
-        
-        # Nếu là list
-        if isinstance(filter_value, list):
-            clean_values = [v for v in filter_value if v not in ["(All)", ""]]
-            if clean_values:
-                placeholders = ', '.join(['?' for _ in clean_values])
-                sql += f" AND {db_column} IN ({placeholders})"
-                params.extend(clean_values)
-                print(f"      - {filter_name} IN {clean_values}")
-        
-        # Nếu là string đơn
-        elif isinstance(filter_value, str):
-            sql += f" AND {db_column} = ?"
-            params.append(filter_value)
-            print(f"      - {filter_name} = '{filter_value}'")
+        if db_column and filter_values:
+            if isinstance(filter_values, list) and len(filter_values) > 0:
+                # Loại bỏ giá trị (All)
+                clean_values = [v for v in filter_values if v not in ["(All)", "All"]]
+                if clean_values:
+                    placeholders = ', '.join(['?'] * len(clean_values))
+                    sql += f" AND {db_column} IN ({placeholders})"
+                    params.extend(clean_values)
+            
+            elif isinstance(filter_values, str):
+                if filter_values not in ["(All)", "All", ""]:
+                    sql += f" AND {db_column} = ?"
+                    params.append(filter_values)
 
-    print(f"   ✅ Final SQL: {sql}")
-    print(f"   ✅ Final Params: {params}")
-    
     return sql, params
 
 # ==============================================================================
@@ -168,87 +144,76 @@ def build_query(filters, period_start, period_end):
 def ask_ai():
     try:
         req_data = request.json
-        print("\n" + "="*80)
-        print("📥 RECEIVED REQUEST FROM TABLEAU")
-        print("="*80)
+        print("📥 Received Payload...")
 
         # --- Lấy dữ liệu từ request ---
         request_meta = req_data.get('request_meta', {})
         filters = req_data.get('filters', {})
         period = req_data.get('period', {})
-        mode_type = req_data.get('mode_type', 'Analyze Report')
-        
-        print(f"📋 Mode: {mode_type}")
-        print(f"📋 Period: {period}")
-        print(f"📋 Filters Keys: {list(filters.keys())}")
+        mode_type = req_data.get('mode_type', 'Analyze Report')  # Default mode
         
         p_start = period.get('start_date')
         p_end = period.get('end_date')
 
-        # --- A. BUILD QUERY ---
-        print("\n⚙️ BUILDING QUERY...")
+        # --- A. QUERY DATABASE ---
+        print("⚙️ Building Query...")
         sql, params = build_query(filters, p_start, p_end)
+        
+        print(f"   SQL: {sql}")
+        print(f"   Params: {params}")
 
-        # --- B. QUERY DATABASE ---
-        print(f"\n🔌 CONNECTING TO DATABASE...")
-        try:
-            conn = get_db_connection()
-            
-            # Execute query
-            print(f"🔄 EXECUTING QUERY...")
-            df = pd.read_sql(sql, conn, params=params)
-            conn.close()
-            
-            print(f"✅ Query returned {len(df)} rows")
-            
-        except Exception as db_error:
-            print(f"\n❌ DATABASE ERROR: {str(db_error)}")
-            raise db_error
+        print("🔌 Connecting to DB...")
+        conn = get_db_connection()
+        
+        # Load dữ liệu vào DataFrame
+        df = pd.read_sql(sql, conn, params=params)
+        conn.close()
 
-        # --- C. PROCESS DATA ---
         if df.empty:
-            print("⚠️ Query returned empty result!")
+            print("⚠️ Query trả về rỗng.")
             metrics_data = []
         else:
-            print(f"\n🔄 PROCESSING DATA...")
+            # --- B. XỬ LÝ PIVOT DATA ---
+            print("🔄 Pivoting Data...")
             
-            # 1. Chuẩn hóa date
+            # 1. Chuẩn hóa format ngày tháng (YYYY-MM-DD)
             df['date'] = pd.to_datetime(df['date']).dt.strftime('%Y-%m-%d')
-            print(f"   ✓ Standardized dates")
 
-            # 2. Filter metrics
+            # 2. Filter: Chỉ lấy metric nằm trong METRIC_VALUE_MAPPING
             df = df[df['Metric_Name'].isin(METRIC_VALUE_MAPPING.keys())]
-            print(f"   ✓ Filtered to {len(df)} valid metrics")
             
-            # 3. Map metric names
+            # 3. Map tên metric sang tên key JSON (nếu có sự khác biệt)
             df['Metric_Name'] = df['Metric_Name'].map(METRIC_VALUE_MAPPING)
-            print(f"   ✓ Mapped metric names")
 
-            # 4. Pivot data
+            # 4. Pivot Table: Xoay dữ liệu từ dạng dài sang dạng rộng
+            # Index: date (Mỗi ngày 1 dòng)
+            # Columns: Metric_Name (Biến giá trị cột này thành tên cột mới)
+            # Values: Metric_Value (Giá trị của metric)
             df_pivot = df.pivot_table(
                 index='date', 
                 columns='Metric_Name', 
                 values='Metric_Value', 
-                aggfunc='first'
+                aggfunc='first'  # Nếu trùng, lấy giá trị đầu tiên
             ).reset_index()
-            print(f"   ✓ Pivoted to {len(df_pivot)} date rows")
 
-            # 5. Fill NaN
+            # 5. Fill NaN với 0 (hoặc null nếu bạn muốn)
             df_pivot = df_pivot.fillna(0)
             
-            # 6. Convert to dict
+            # 6. Convert thành List Dictionary
             metrics_data = df_pivot.to_dict(orient='records')
-            print(f"   ✓ Converted to {len(metrics_data)} records")
 
-        # --- D. BUILD RESPONSE ---
-        print(f"\n📤 BUILDING RESPONSE...")
+        # --- C. TẠO JSON OUTPUT THEO FORMAT CÓ ĐỊNH ---
+        # Tạo request_meta với request_id, timestamp, mode_type
         final_request_meta = {
             "request_id": generate_request_id(),
             "timestamp": get_iso_timestamp(),
             "mode_type": mode_type
         }
+        
+        # Merge với request_meta từ client (nếu có thêm thông tin)
         final_request_meta.update(request_meta)
 
+        # Tạo response theo format chuẩn
         final_response = {
             "request_meta": final_request_meta,
             "period": period,
@@ -256,14 +221,23 @@ def ask_ai():
             "metrics_data": metrics_data
         }
 
-        print(f"✅ SUCCESS: Generated response with {len(metrics_data)} metric records")
+        print(f"✅ Success: {len(metrics_data)} rows processed.")
         print(f"   Request ID: {final_request_meta['request_id']}")
-        print("="*80 + "\n")
         
+        # --- D. SAVE JSON FILE (Optional) ---
+        # Bỏ comment nếu bạn muốn save file
+        # json_output_path = f"outputs/metrics_{final_request_meta['request_id']}.json"
+        # os.makedirs("outputs", exist_ok=True)
+        # with open(json_output_path, 'w', encoding='utf-8') as f:
+        #     json.dump(final_response, f, indent=2, ensure_ascii=False)
+        # print(f"   Saved to: {json_output_path}")
+
+        # --- E. RESPONSE HỎI CLIENT ---
+        # Hiển thị tóm tắt trên UI
         html_response = f"""
         <div>
             <h5 style="color:green">✅ Data Extraction Successful!</h5>
-            <p>Found <b>{len(metrics_data)}</b> date records with metrics.</p>
+            <p>Found <b>{len(metrics_data)}</b> records.</p>
             <p>Ready for AI Analysis.</p>
             <p style="font-size:0.9em; color:#666;">
                 Request ID: <code>{final_request_meta['request_id']}</code>
@@ -275,10 +249,8 @@ def ask_ai():
 
     except Exception as e:
         import traceback
-        print(f"\n❌ ERROR OCCURRED:")
-        print(traceback.format_exc())
-        print("="*80 + "\n")
-        return jsonify({"answer": f"<div style='color:red'><h5>System Error</h5><pre>{str(e)}</pre></div>"}), 500
+        traceback.print_exc()
+        return jsonify({"answer": f"<div style='color:red'><h5>System Error</h5>{str(e)}</div>"}), 500
 
 # ==============================================================================
 # 5. SERVE STATIC FILES
