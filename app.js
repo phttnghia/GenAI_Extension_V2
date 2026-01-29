@@ -53,49 +53,70 @@ async function handleProcess(modeType) {
         // 1.2 Cross-check để lấy giá trị thực (Fix lỗi All)
         const finalFilters = await enrichFiltersWithData(rawFilters);
 
-        // 1.3 Lấy Parameter Period (Nếu có)
-        const params = await dashboard.getParametersAsync();
-        const periodParam = params.find(p => p.name === "Input Period"); 
-        const periodValue = periodParam ? periodParam.currentValue.formattedValue : "N/A";
-
         // --- BƯỚC 2: ĐÓNG GÓI PAYLOAD ---
+        // Xử lý period (format YYYY-MM-DD)
+        const today = new Date();
+        const start_date = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]; // 7 ngày trước
+        const end_date = today.toISOString().split('T')[0]; // Hôm nay
+        
         const payload = {
             "request_meta": { 
-                "request_id": "req_" + Date.now(),
-                "timestamp": new Date().toISOString(),
-                "mode_type": modeType // <--- GIÁ TRỊ ĐỘNG Ở ĐÂY ("Analyze_Data" hoặc "AI_Assistant")
+                "mode_type": modeType === "Analyze_Data" ? "Analyze Report" : "AI Assistant"
             },
-            "user_question": userQuestion, // Gửi kèm câu hỏi nếu có
-            "period": periodValue,
-            "filters": finalFilters
+            "period": {
+                "start_date": start_date,
+                "end_date": end_date
+            },
+            "filters": finalFilters,
+            "mode_type": modeType === "Analyze_Data" ? "Analyze Report" : "AI Assistant"
         };
+        
+        // Thêm user_question nếu là Chat mode
+        if(isChatMode && userQuestion) {
+            payload.user_question = userQuestion;
+        }
 
         // Debug log
         console.log(`📤 Sending payload [${modeType}]:`, payload);
 
-        // --- BƯỚC 3: HIỂN THỊ DEBUG (Tạm thời) ---
-        // (Bạn có thể bỏ phần này khi chạy thật để gọi sendToBackend)
-        let debugHtml = `
-            <div style="text-align:left; font-size:12px;">
-                <div style="background:#e3f2fd; padding:5px; margin-bottom:5px; border-left:3px solid #2196F3;">
-                    <strong>MODE:</strong> ${modeType}<br>
-                    ${isChatMode ? `<strong>Q:</strong> ${userQuestion}` : ''}
+        // --- BƯỚC 3: GỬI SANG BACKEND ---
+        console.log("🚀 Gửi request tới /ask-ai...");
+        const backendResponse = await sendToBackend(payload);
+        
+        console.log("📥 Response từ backend:", backendResponse);
+        
+        // --- HIỂN THỊ TRONG DEBUG PANEL ---
+        const debugPanel = document.getElementById("debugPanel");
+        if(debugPanel) {
+            debugPanel.textContent = JSON.stringify(backendResponse.data || backendResponse, null, 2);
+        }
+        
+        // --- BƯỚC 4: HIỂN THỊ KẾT QUẢ ---
+        let displayHtml = `
+            <div style="text-align:left;">
+                <div style="background:#e3f2fd; padding:10px; margin-bottom:10px; border-left:4px solid #2196F3;">
+                    ${backendResponse.answer || ""}
                 </div>
-                <strong>FILTERS:</strong>
         `;
         
-        for (const [key, val] of Object.entries(finalFilters)) {
-            const color = (val === "(All)" || val[0] === "(All)") ? "#888" : "#007bff; font-weight:bold";
-            debugHtml += `<div>• ${key}: <span style="color:${color}">${Array.isArray(val) ? val.join(", ") : val}</span></div>`;
+        // Hiển thị JSON response đầy đủ
+        if(backendResponse.data) {
+            displayHtml += `
+                <details open style="background:#f5f5f5; padding:10px; margin-top:10px; border-radius:4px;">
+                    <summary style="cursor:pointer; font-weight:bold; color:#333;">
+                        📋 JSON Response (DEBUG)
+                    </summary>
+                    <pre style="background:#fff; border:1px solid #ddd; padding:10px; overflow-x:auto; font-size:11px; margin-top:8px;">
+${JSON.stringify(backendResponse.data, null, 2)}
+                    </pre>
+                </details>
+            `;
         }
-        debugHtml += `</div>`;
         
-        if(resultContainer) resultContainer.innerHTML = debugHtml;
-        if(statusText) statusText.textContent = "Ready to send";
-
-        // --- BƯỚC 4: GỬI SANG BACKEND ---
-        // const backendResponse = await sendToBackend(payload);
-        // if(resultContainer) resultContainer.innerHTML = backendResponse.answer;
+        displayHtml += `</div>`;
+        
+        if(resultContainer) resultContainer.innerHTML = displayHtml;
+        if(statusText) statusText.textContent = "✅ Completed";
 
     } catch (err) {
         console.error(err);
@@ -162,10 +183,25 @@ async function enrichFiltersWithData(currentFilters) {
 
 // Hàm gửi backend
 async function sendToBackend(payload) {
-    const res = await fetch("http://localhost:5000/ask-ai", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-    });
-    return await res.json();
+    try {
+        console.log("🔌 Fetching /ask-ai...");
+        const res = await fetch("http://localhost:5000/ask-ai", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        });
+        
+        console.log(`   Response status: ${res.status} ${res.statusText}`);
+        
+        if (!res.ok) {
+            throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+        }
+        
+        const data = await res.json();
+        console.log("✅ Got response:", data);
+        return data;
+    } catch (err) {
+        console.error("❌ Backend error:", err);
+        throw err;
+    }
 }

@@ -5,17 +5,8 @@ import pyodbc
 import os
 import json
 from datetime import datetime
+from config.settings import settings
 import uuid
-# from config.settings import settings # (Bỏ comment khi chạy thật)
-
-# --- MOCK SETTINGS (Dùng tạm để code chạy được ngay, bạn thay bằng import settings nhé) ---
-class settings:
-    AZURE_SQL_SERVER = 'your-server.database.windows.net'
-    AZURE_SQL_DATABASE = 'your-database'
-    AZURE_SQL_USER = 'your-email'
-    AZURE_SQL_PASSWORD = 'your-password'
-    AZURE_SQL_DRIVER = '{ODBC Driver 17 for SQL Server}'
-    AZURE_CONNECT_TIMEOUT = 30
 
 app = Flask(__name__, static_folder=os.path.dirname(os.path.abspath(__file__)))
 CORS(app)
@@ -78,62 +69,94 @@ def get_iso_timestamp():
 # ==============================================================================
 def get_db_connection():
     try:
-        # Authentication=ActiveDirectoryInteractive (Dùng cho MFA)
-        # Authentication=SqlPassword (Dùng cho user/pass thường)
         conn_str = (
-            f"Driver={settings.AZURE_SQL_DRIVER};"
-            f"Server={settings.AZURE_SQL_SERVER};"
-            f"Database={settings.AZURE_SQL_DATABASE};"
+            f"DRIVER={settings.AZURE_SQL_DRIVER};"
+            f"SERVER={settings.AZURE_SQL_SERVER};"
+            f"DATABASE={settings.AZURE_SQL_DATABASE};"
             f"UID={settings.AZURE_SQL_USER};"
-            "Authentication=ActiveDirectoryInteractive;" # <--- QUAN TRỌNG: Để dòng này nếu dùng MFA
+            f"PWD={settings.AZURE_SQL_PASSWORD};"
+            f"Connection Timeout={settings.AZURE_CONNECT_TIMEOUT};"
+            "Encrypt=yes;"
+            "TrustServerCertificate=no;"
         )
+
         return pyodbc.connect(conn_str)
+
     except Exception as e:
-        print(f"❌ Database Connection Error: {e}")
-        raise e
+        print("❌ Database Connection Error")
+        print(e)
+        raise
+
 
 # ==============================================================================
-# 3. BUILD QUERY (Sửa lại: Chỉ lấy 3 cột chính để Pivot)
+# 3. BUILD QUERY (Query từ EAV Model)
 # ==============================================================================
 def build_query(filters, period_start, period_end):
-    # Thay vì select cột động, ta select 3 cột cố định của mô hình EAV
-    # Giả sử tên cột trong view là: report_date, metric_name, metric_value
-    # Bạn cần sửa lại tên cột này cho đúng với View thật của bạn
+    """
+    Build dynamic SQL query based on filters
+    
+    Filter names từ app.js được map như sau:
+      - "Redmine Infra" -> column "redmine_infra"
+      - "Redmine Server" -> column "redmine_server"
+      - "Redmine Instance" -> column "redmine_instance"
+      - "Project Identifier" -> column "project_identifier"
+      - "Filter 1 (Vw Bug Report By Testplan)" -> column "filter_1"
+      ...
+    """
+    # SELECT 3 cột chính từ EAV model
     sql = f"""
         SELECT 
-            report_date as date, 
+            date, 
             Metric_Name, 
             Metric_Value 
-        FROM {DB_SCHEMA_NAME}.{DB_VIEW_NAME} 
+        FROM [{DB_SCHEMA_NAME}].[{DB_VIEW_NAME}]
         WHERE 1=1
+            AND date IS NOT NULL
     """
     
     params = []
 
-    # 1. Period
+    # 1. XỬ LÝ PERIOD (DATE RANGE)
     if period_start and period_end:
-        sql += " AND report_date BETWEEN ? AND ?"
+        sql += " AND date BETWEEN ? AND ?"
         params.append(period_start)
         params.append(period_end)
+        print(f"   📅 Period filter: {period_start} to {period_end}")
 
-    # 2. Filters
-    for ui_filter_name, filter_values in filters.items():
-        db_column = FILTER_COLUMN_MAPPING.get(ui_filter_name)
+    # 2. XỬ LÝ FILTERS
+    print(f"   🔍 Processing {len(filters)} filters:")
+    for filter_name, filter_value in filters.items():
+        # Tìm mapping từ filter name (từ dashboard) sang column name (trong DB)
+        db_column = FILTER_COLUMN_MAPPING.get(filter_name)
         
-        if db_column and filter_values:
-            if isinstance(filter_values, list) and len(filter_values) > 0:
-                # Loại bỏ giá trị (All)
-                clean_values = [v for v in filter_values if v not in ["(All)", "All"]]
-                if clean_values:
-                    placeholders = ', '.join(['?'] * len(clean_values))
-                    sql += f" AND {db_column} IN ({placeholders})"
-                    params.extend(clean_values)
-            
-            elif isinstance(filter_values, str):
-                if filter_values not in ["(All)", "All", ""]:
-                    sql += f" AND {db_column} = ?"
-                    params.append(filter_values)
-
+        if not db_column:
+            # Nếu không có mapping, skip
+            print(f"      ⊘ {filter_name}: NO MAPPING (skipped)")
+            continue
+        
+        # Bỏ qua nếu value là (All) hoặc rỗng
+        if not filter_value or filter_value == "(All)" or filter_value == ["(All)"] or filter_value == []:
+            print(f"      ⊘ {filter_name}: ALL VALUES (skipped)")
+            continue
+        
+        # Xử lý list values
+        if isinstance(filter_value, list):
+            clean_values = [v for v in filter_value if v and v != "(All)"]
+            if clean_values:
+                placeholders = ', '.join(['?' for _ in clean_values])
+                sql += f" AND [{db_column}] IN ({placeholders})"
+                params.extend(clean_values)
+                print(f"      ✓ {filter_name} IN ({', '.join(clean_values)})")
+        
+        # Xử lý string value
+        elif isinstance(filter_value, str):
+            sql += f" AND [{db_column}] = ?"
+            params.append(filter_value)
+            print(f"      ✓ {filter_name} = '{filter_value}'")
+    
+    print(f"\n   ✅ Final SQL:\n{sql}")
+    print(f"   ✅ Params: {params}\n")
+    
     return sql, params
 
 # ==============================================================================
@@ -143,77 +166,106 @@ def build_query(filters, period_start, period_end):
 @app.route('/ask-ai', methods=['POST'])
 def ask_ai():
     try:
+        print("\n" + "="*80)
+        print("📥 REQUEST FROM TABLEAU EXTENSION")
+        print("="*80)
+        
         req_data = request.json
-        print("📥 Received Payload...")
-
-        # --- Lấy dữ liệu từ request ---
         request_meta = req_data.get('request_meta', {})
         filters = req_data.get('filters', {})
         period = req_data.get('period', {})
-        mode_type = req_data.get('mode_type', 'Analyze Report')  # Default mode
+        mode_type = req_data.get('mode_type', 'Analyze Report')
+        
+        print(f"Mode: {mode_type}")
+        print(f"Period: {period}")
+        print(f"Filters: {list(filters.keys())}")
         
         p_start = period.get('start_date')
         p_end = period.get('end_date')
 
-        # --- A. QUERY DATABASE ---
-        print("⚙️ Building Query...")
+        # ===== A. BUILD & EXECUTE QUERY =====
+        print("\n⚙️ STEP 1: BUILD QUERY")
+        print("-" * 80)
         sql, params = build_query(filters, p_start, p_end)
-        
-        print(f"   SQL: {sql}")
-        print(f"   Params: {params}")
 
-        print("🔌 Connecting to DB...")
-        conn = get_db_connection()
-        
-        # Load dữ liệu vào DataFrame
-        df = pd.read_sql(sql, conn, params=params)
-        conn.close()
+        print("\n🔌 STEP 2: CONNECT & QUERY DATABASE")
+        print("-" * 80)
+        try:
+            conn = get_db_connection()
+            print("   ✓ Connected")
+            
+            df = pd.read_sql(sql, conn, params=params)
+            conn.close()
+            print(f"   ✓ Query returned {len(df)} rows")
+            
+        except Exception as db_err:
+            print(f"   ❌ Database error: {str(db_err)}")
+            raise
 
+        # ===== B. PROCESS DATA =====
         if df.empty:
-            print("⚠️ Query trả về rỗng.")
+            print("\n⚠️ STEP 3: PROCESS DATA")
+            print("-" * 80)
+            print("   ⊘ No data returned from query")
             metrics_data = []
         else:
-            # --- B. XỬ LÝ PIVOT DATA ---
-            print("🔄 Pivoting Data...")
+            print("\n📊 STEP 3: PROCESS DATA (EAV → Wide Format)")
+            print("-" * 80)
             
-            # 1. Chuẩn hóa format ngày tháng (YYYY-MM-DD)
+            # 1. Clean & standardize dates
+            print("   Step 3.1: Standardize dates...")
             df['date'] = pd.to_datetime(df['date']).dt.strftime('%Y-%m-%d')
+            print(f"      ✓ Date range: {df['date'].min()} to {df['date'].max()}")
 
-            # 2. Filter: Chỉ lấy metric nằm trong METRIC_VALUE_MAPPING
-            df = df[df['Metric_Name'].isin(METRIC_VALUE_MAPPING.keys())]
+            # 2. Filter valid metrics
+            print("   Step 3.2: Filter valid metrics...")
+            valid_metrics = list(METRIC_VALUE_MAPPING.keys())
+            print(f"      Expected metrics: {valid_metrics}")
+            print(f"      Metrics in data: {df['Metric_Name'].unique().tolist()}")
             
-            # 3. Map tên metric sang tên key JSON (nếu có sự khác biệt)
+            df_before = len(df)
+            df = df[df['Metric_Name'].isin(valid_metrics)]
+            print(f"      ✓ Filtered: {df_before} → {len(df)} rows")
+
+            # 3. Map metric names (if needed)
+            print("   Step 3.3: Map metric names...")
             df['Metric_Name'] = df['Metric_Name'].map(METRIC_VALUE_MAPPING)
+            print(f"      ✓ Mapped")
 
-            # 4. Pivot Table: Xoay dữ liệu từ dạng dài sang dạng rộng
-            # Index: date (Mỗi ngày 1 dòng)
-            # Columns: Metric_Name (Biến giá trị cột này thành tên cột mới)
-            # Values: Metric_Value (Giá trị của metric)
+            # 4. Pivot: EAV to Wide format
+            print("   Step 3.4: Pivot data (EAV → Wide)...")
             df_pivot = df.pivot_table(
-                index='date', 
-                columns='Metric_Name', 
-                values='Metric_Value', 
-                aggfunc='first'  # Nếu trùng, lấy giá trị đầu tiên
+                index='date',
+                columns='Metric_Name',
+                values='Metric_Value',
+                aggfunc='first'
             ).reset_index()
+            print(f"      ✓ Pivoted: {len(df_pivot)} date rows × {len(df_pivot.columns)-1} metrics")
 
-            # 5. Fill NaN với 0 (hoặc null nếu bạn muốn)
+            # 5. Fill NaN & Convert to int/float
+            print("   Step 3.5: Clean & convert types...")
             df_pivot = df_pivot.fillna(0)
-            
-            # 6. Convert thành List Dictionary
-            metrics_data = df_pivot.to_dict(orient='records')
+            # Convert numeric columns to numeric type
+            for col in df_pivot.columns:
+                if col != 'date':
+                    df_pivot[col] = pd.to_numeric(df_pivot[col], errors='coerce').fillna(0)
+            print(f"      ✓ Ready for output")
 
-        # --- C. TẠO JSON OUTPUT THEO FORMAT CÓ ĐỊNH ---
-        # Tạo request_meta với request_id, timestamp, mode_type
+            # 6. Convert to list of dicts
+            metrics_data = df_pivot.to_dict(orient='records')
+            print(f"      ✓ Converted to {len(metrics_data)} records")
+
+        # ===== C. BUILD RESPONSE =====
+        print("\n📤 STEP 4: BUILD JSON RESPONSE")
+        print("-" * 80)
+        
         final_request_meta = {
             "request_id": generate_request_id(),
             "timestamp": get_iso_timestamp(),
             "mode_type": mode_type
         }
-        
-        # Merge với request_meta từ client (nếu có thêm thông tin)
         final_request_meta.update(request_meta)
 
-        # Tạo response theo format chuẩn
         final_response = {
             "request_meta": final_request_meta,
             "period": period,
@@ -221,27 +273,22 @@ def ask_ai():
             "metrics_data": metrics_data
         }
 
-        print(f"✅ Success: {len(metrics_data)} rows processed.")
+        print(f"   ✓ Generated response")
         print(f"   Request ID: {final_request_meta['request_id']}")
-        
-        # --- D. SAVE JSON FILE (Optional) ---
-        # Bỏ comment nếu bạn muốn save file
-        # json_output_path = f"outputs/metrics_{final_request_meta['request_id']}.json"
-        # os.makedirs("outputs", exist_ok=True)
-        # with open(json_output_path, 'w', encoding='utf-8') as f:
-        #     json.dump(final_response, f, indent=2, ensure_ascii=False)
-        # print(f"   Saved to: {json_output_path}")
+        print(f"   Records: {len(metrics_data)}")
+        print("="*80 + "\n")
 
-        # --- E. RESPONSE HỎI CLIENT ---
-        # Hiển thị tóm tắt trên UI
         html_response = f"""
-        <div>
-            <h5 style="color:green">✅ Data Extraction Successful!</h5>
-            <p>Found <b>{len(metrics_data)}</b> records.</p>
-            <p>Ready for AI Analysis.</p>
-            <p style="font-size:0.9em; color:#666;">
-                Request ID: <code>{final_request_meta['request_id']}</code>
-            </p>
+        <div style="text-align:left;">
+            <div style="background:#e8f5e9; padding:12px; border-left:4px solid #4caf50; margin-bottom:10px; border-radius:4px;">
+                <h5 style="margin:0; color:#2e7d32;">✅ Data Extraction Successful!</h5>
+                <p style="margin:5px 0; color:#555;">
+                    Found <b>{len(metrics_data)}</b> date records with metrics.
+                </p>
+                <p style="margin:5px 0; font-size:0.9em; color:#666;">
+                    Request ID: <code style="background:#fff; padding:2px 4px; border-radius:2px;">{final_request_meta['request_id']}</code>
+                </p>
+            </div>
         </div>
         """
 
@@ -249,8 +296,14 @@ def ask_ai():
 
     except Exception as e:
         import traceback
-        traceback.print_exc()
-        return jsonify({"answer": f"<div style='color:red'><h5>System Error</h5>{str(e)}</div>"}), 500
+        error_msg = traceback.format_exc()
+        print(f"\n❌ ERROR OCCURRED:")
+        print(error_msg)
+        print("="*80 + "\n")
+        
+        return jsonify({
+            "answer": f"<div style='color:#c62828; background:#ffebee; padding:12px; border-left:4px solid #c62828; border-radius:4px;'><h5 style='margin:0;'>❌ System Error</h5><pre style='margin:8px 0; font-size:0.85em; overflow-x:auto;'>{str(e)}</pre></div>"
+        }), 500
 
 # ==============================================================================
 # 5. SERVE STATIC FILES
