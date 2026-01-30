@@ -53,19 +53,16 @@ async function handleProcess(modeType) {
         // 1.2 Cross-check để lấy giá trị thực (Fix lỗi All)
         const finalFilters = await enrichFiltersWithData(rawFilters);
 
-        // --- BƯỚC 2: ĐÓNG GÓI PAYLOAD ---
-        // Xử lý period (format YYYY-MM-DD)
-        const today = new Date();
-        const start_date = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]; // 7 ngày trước
-        const end_date = today.toISOString().split('T')[0]; // Hôm nay
-        
+        // --- BƯỚC 2: ĐÓNG GÓP PAYLOAD ---
+        // Xử lý period: Ban đầu gửi null để backend lấy toàn bộ dữ liệu, 
+        // sau đó backend sẽ tính min/max date từ dữ liệu thực tế
         const payload = {
             "request_meta": { 
                 "mode_type": modeType === "Analyze_Data" ? "Analyze Report" : "AI Assistant"
             },
             "period": {
-                "start_date": start_date,
-                "end_date": end_date
+                "start_date": null,
+                "end_date": null
             },
             "filters": finalFilters,
             "mode_type": modeType === "Analyze_Data" ? "Analyze Report" : "AI Assistant"

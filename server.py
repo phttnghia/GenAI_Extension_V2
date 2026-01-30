@@ -31,6 +31,20 @@ FILTER_COLUMN_MAPPING = {
     "Filter 5 (Vw Bug Report By Testplan)": "filter_5"
 }
 
+# 1b. Mapping Filter Display Name: Tên Filter UI -> Tên hiển thị trong JSON (Dùng cho Response)
+# Dùng để normalize filter names trong JSON response
+FILTER_DISPLAY_NAME_MAPPING = {
+    "Project Identifier": "project_identifier",
+    "Redmine Infra": "redmine_infra",
+    "Redmine Server": "redmine_server",
+    "Redmine Instance": "redmine_instance",
+    "Filter 1 (Vw Bug Report By Testplan)": "filter_1",
+    "Filter 2 (Vw Bug Report By Testplan)": "filter_2",
+    "Filter 3 (Vw Bug Report By Testplan)": "filter_3",
+    "Filter 4 (Vw Bug Report By Testplan)": "filter_4",
+    "Filter 5 (Vw Bug Report By Testplan)": "filter_5"
+}
+
 # 2. Mapping Metric Name: Giá trị trong cột Metric_Name (DB) -> Key trong JSON (Output)
 # Cách dùng: Khi Pivot, cột Metric_Name sẽ được map sang key này trong JSON output
 # Ví dụ: DB có Metric_Name='TestCaseActual' -> JSON output sẽ có key 'TestCaseActual': <giá trị>
@@ -51,6 +65,18 @@ METRIC_VALUE_MAPPING = {
     "BReportUpperBound": "BReportUpperBound",
     "BReportLowerBound": "BReportLowerBound"
 }
+
+def normalize_filter_names(filters):
+    """
+    Map filter display names to short names for JSON response
+    Example: "Filter 1 (Vw Bug Report By Testplan)" -> "filter_1"
+    """
+    normalized = {}
+    for filter_name, filter_value in filters.items():
+        # Get short display name from mapping, or keep original if not found
+        short_name = FILTER_DISPLAY_NAME_MAPPING.get(filter_name, filter_name)
+        normalized[short_name] = filter_value
+    return normalized
 
 # ==============================================================================
 # 2. HỖ TRỢ HÀM
@@ -116,12 +142,14 @@ def build_query(filters, period_start, period_end):
     
     params = []
 
-    # 1. XỬ LÝ PERIOD (DATE RANGE)
+    # 1. XỬ LÝ PERIOD (DATE RANGE) - Chỉ thêm nếu cả hai date được cung cấp
     if period_start and period_end:
         sql += " AND date BETWEEN ? AND ?"
         params.append(period_start)
         params.append(period_end)
         print(f"   📅 Period filter: {period_start} to {period_end}")
+    else:
+        print(f"   📅 Period filter: NONE (will fetch all available data)")
 
     # 2. XỬ LÝ FILTERS
     print(f"   🔍 Processing {len(filters)} filters:")
@@ -198,6 +226,11 @@ def ask_ai():
             conn.close()
             print(f"   ✓ Query returned {len(df)} rows")
             
+            if len(df) > 0:
+                print(f"   ✓ Date range in raw data: {df['date'].min()} to {df['date'].max()}")
+                print(f"   ✓ Unique Metric_Names: {df['Metric_Name'].unique().tolist()}")
+                print(f"   ✓ Sample data:\n{df.head(10)}")
+            
         except Exception as db_err:
             print(f"   ❌ Database error: {str(db_err)}")
             raise
@@ -215,49 +248,79 @@ def ask_ai():
             # 1. Clean & standardize dates
             print("   Step 3.1: Standardize dates...")
             df['date'] = pd.to_datetime(df['date']).dt.strftime('%Y-%m-%d')
-            print(f"      ✓ Date range: {df['date'].min()} to {df['date'].max()}")
+            date_min = df['date'].min()
+            date_max = df['date'].max()
+            print(f"      ✓ Date range: {date_min} to {date_max}")
+            print(f"      ✓ Total unique dates: {df['date'].nunique()}")
 
             # 2. Filter valid metrics
             print("   Step 3.2: Filter valid metrics...")
             valid_metrics = list(METRIC_VALUE_MAPPING.keys())
             print(f"      Expected metrics: {valid_metrics}")
-            print(f"      Metrics in data: {df['Metric_Name'].unique().tolist()}")
+            metrics_in_data = df['Metric_Name'].unique().tolist()
+            print(f"      Metrics in data: {metrics_in_data}")
             
             df_before = len(df)
             df = df[df['Metric_Name'].isin(valid_metrics)]
-            print(f"      ✓ Filtered: {df_before} → {len(df)} rows")
+            df_after = len(df)
+            print(f"      ✓ Filtered: {df_before} → {df_after} rows")
+            
+            if df_after == 0:
+                print("      ⚠️ WARNING: No valid metrics found after filtering!")
+                metrics_data = []
+            else:
+                # 3. Map metric names (if needed)
+                print("   Step 3.3: Map metric names...")
+                df['Metric_Name'] = df['Metric_Name'].map(METRIC_VALUE_MAPPING)
+                print(f"      ✓ Mapped")
 
-            # 3. Map metric names (if needed)
-            print("   Step 3.3: Map metric names...")
-            df['Metric_Name'] = df['Metric_Name'].map(METRIC_VALUE_MAPPING)
-            print(f"      ✓ Mapped")
+                # 4. Convert Metric_Value to numeric
+                print("   Step 3.4: Convert Metric_Value to numeric...")
+                df['Metric_Value'] = pd.to_numeric(df['Metric_Value'], errors='coerce')
+                print(f"      ✓ Converted")
 
-            # 4. Pivot: EAV to Wide format
-            print("   Step 3.4: Pivot data (EAV → Wide)...")
-            df_pivot = df.pivot_table(
-                index='date',
-                columns='Metric_Name',
-                values='Metric_Value',
-                aggfunc='first'
-            ).reset_index()
-            print(f"      ✓ Pivoted: {len(df_pivot)} date rows × {len(df_pivot.columns)-1} metrics")
+                # 5. Pivot: EAV to Wide format
+                print("   Step 3.5: Pivot data (EAV → Wide)...")
+                df_pivot = df.pivot_table(
+                    index='date',
+                    columns='Metric_Name',
+                    values='Metric_Value',
+                    aggfunc='first'
+                ).reset_index()
+                print(f"      ✓ Pivoted: {len(df_pivot)} date rows × {len(df_pivot.columns)-1} metrics")
+                print(f"      ✓ Columns: {df_pivot.columns.tolist()}")
 
-            # 5. Fill NaN & Convert to int/float
-            print("   Step 3.5: Clean & convert types...")
-            df_pivot = df_pivot.fillna(0)
-            # Convert numeric columns to numeric type
-            for col in df_pivot.columns:
-                if col != 'date':
-                    df_pivot[col] = pd.to_numeric(df_pivot[col], errors='coerce').fillna(0)
-            print(f"      ✓ Ready for output")
+                # 6. Fill NaN & Convert to int/float
+                print("   Step 3.6: Clean & convert types...")
+                df_pivot = df_pivot.fillna(0)
+                # Convert numeric columns to numeric type
+                for col in df_pivot.columns:
+                    if col != 'date':
+                        df_pivot[col] = pd.to_numeric(df_pivot[col], errors='coerce').fillna(0).astype(int)
+                print(f"      ✓ Ready for output")
+                print(f"      ✓ Data types:\n{df_pivot.dtypes}")
 
-            # 6. Convert to list of dicts
-            metrics_data = df_pivot.to_dict(orient='records')
-            print(f"      ✓ Converted to {len(metrics_data)} records")
+                # 7. Sort by date and convert to list of dicts
+                df_pivot = df_pivot.sort_values('date').reset_index(drop=True)
+                metrics_data = df_pivot.to_dict(orient='records')
+                print(f"      ✓ Converted to {len(metrics_data)} records")
+                if len(metrics_data) > 0:
+                    print(f"      ✓ First record: {metrics_data[0]}")
+                    print(f"      ✓ Last record: {metrics_data[-1]}")
 
         # ===== C. BUILD RESPONSE =====
         print("\n📤 STEP 4: BUILD JSON RESPONSE")
         print("-" * 80)
+        
+        # Calculate actual period from data (min and max dates)
+        actual_period = period.copy() if period else {}
+        if metrics_data and len(metrics_data) > 0:
+            dates = [record.get('date') for record in metrics_data if record.get('date')]
+            if dates:
+                dates_sorted = sorted(dates)
+                actual_period['start_date'] = dates_sorted[0]
+                actual_period['end_date'] = dates_sorted[-1]
+                print(f"   ✓ Actual period from data: {actual_period['start_date']} to {actual_period['end_date']}")
         
         final_request_meta = {
             "request_id": generate_request_id(),
@@ -266,16 +329,20 @@ def ask_ai():
         }
         final_request_meta.update(request_meta)
 
+        # Normalize filter names for response
+        normalized_filters = normalize_filter_names(filters)
+
         final_response = {
             "request_meta": final_request_meta,
-            "period": period,
-            "filters": filters,
+            "period": actual_period,
+            "filters": normalized_filters,
             "metrics_data": metrics_data
         }
 
         print(f"   ✓ Generated response")
         print(f"   Request ID: {final_request_meta['request_id']}")
         print(f"   Records: {len(metrics_data)}")
+        print(f"   Normalized filters: {list(normalized_filters.keys())}")
         print("="*80 + "\n")
 
         html_response = f"""
