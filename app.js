@@ -2,21 +2,51 @@
 const MAIN_SHEET_NAME = "Line_Chart"; 
 
 // --- KHỞI TẠO ---
+
+// Tab switching
+document.querySelectorAll(".tab").forEach(tab => {
+  tab.addEventListener("click", () => {
+    document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+    document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
+
+    tab.classList.add("active");
+    document.getElementById(tab.dataset.tab).classList.add("active");
+  });
+});
 let dashboard;
 tableau.extensions.initializeAsync().then(() => {
     dashboard = tableau.extensions.dashboardContent.dashboard;
     console.log("✅ Extension initialized");
-    
     // 1. Gắn sự kiện cho nút ANALYZE (Report)
     const analyzeBtn = document.getElementById("analyzeBtn");
     if(analyzeBtn) {
         analyzeBtn.addEventListener("click", () => handleProcess("Analyze_Data"));
     }
-
     // 2. Gắn sự kiện cho nút SEND (Chat AI)
     const sendBtn = document.getElementById("sendBtn");
+    const chatInput = document.getElementById("chatInput");
+    const charCount = document.getElementById("charCount");
+    
     if(sendBtn) {
         sendBtn.addEventListener("click", () => handleProcess("AI_Assistant"));
+    }
+    
+    if(chatInput) {
+        // Enable/disable send button based on input
+        chatInput.addEventListener("input", (e) => {
+            const text = e.target.value.trim();
+            const charCountText = `${text.length} / 500`;
+            
+            if(charCount) charCount.textContent = charCountText;
+            if(sendBtn) sendBtn.disabled = text.length === 0;
+        });
+        
+        // Allow Shift+Enter to send
+        chatInput.addEventListener("keydown", (e) => {
+            if(e.key === "Enter" && e.shiftKey && !sendBtn.disabled) {
+                handleProcess("AI_Assistant");
+            }
+        });
     }
 });
 
@@ -39,6 +69,11 @@ async function handleProcess(modeType) {
         : "";
 
     try {
+        // Validate chat input for AI Assistant mode
+        if(isChatMode && !userQuestion.trim()) {
+            throw new Error("Vui lòng nhập câu hỏi trước khi gửi");
+        }
+
         if(statusText) statusText.textContent = `Processing ${modeType}...`;
         if(resultContainer) {
             resultContainer.innerHTML = "⏳ Đang thu thập dữ liệu & phân tích...";
@@ -114,16 +149,27 @@ ${JSON.stringify(backendResponse.data, null, 2)}
         
         if(resultContainer) resultContainer.innerHTML = displayHtml;
         if(statusText) statusText.textContent = "✅ Completed";
+        
+        // Clear chat input after successful send
+        if(isChatMode) {
+            const chatInput = document.getElementById("chatInput");
+            if(chatInput) {
+                chatInput.value = "";
+                const charCount = document.getElementById("charCount");
+                if(charCount) charCount.textContent = "0 / 500";
+                const sendBtn = document.getElementById("sendBtn");
+                if(sendBtn) sendBtn.disabled = true;
+            }
+        }
 
     } catch (err) {
         console.error(err);
-        if(resultContainer) resultContainer.innerHTML = `<span style="color:red">Lỗi: ${err.message}</span>`;
+        if(resultContainer) resultContainer.innerHTML = `<span style="color:red">❌ Lỗi: ${err.message}</span>`;
         if(statusText) statusText.textContent = "Failed";
     }
 }
 
-// ... (Giữ nguyên các hàm getRawFilters và enrichFiltersWithData ở dưới)
-// --- HÀM 1: LẤY FILTER THÔ (Giữ nguyên) ---
+// --- HÀM 1: LẤY FILTER THÔ ---
 async function getRawFilters() {
     const sheet = dashboard.worksheets.find(w => w.name === MAIN_SHEET_NAME);
     if (!sheet) throw new Error(`Không tìm thấy sheet: ${MAIN_SHEET_NAME}`);
@@ -143,7 +189,7 @@ async function getRawFilters() {
     return filterMap;
 }
 
-// --- HÀM 2: CROSS-CHECK DỮ LIỆU (Giữ nguyên) ---
+// --- HÀM 2: CROSS-CHECK DỮ LIỆU ---
 async function enrichFiltersWithData(currentFilters) {
     const sheet = dashboard.worksheets.find(w => w.name === MAIN_SHEET_NAME);
     const summary = await sheet.getSummaryDataAsync({ maxRows: 0 }); 
