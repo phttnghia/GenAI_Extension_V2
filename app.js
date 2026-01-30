@@ -170,6 +170,7 @@ ${JSON.stringify(backendResponse.data, null, 2)}
 }
 
 // --- HÀM 1: LẤY FILTER THÔ ---
+// --- HÀM 1: LẤY FILTER THÔ ---
 async function getRawFilters() {
     const sheet = dashboard.worksheets.find(w => w.name === MAIN_SHEET_NAME);
     if (!sheet) throw new Error(`Không tìm thấy sheet: ${MAIN_SHEET_NAME}`);
@@ -177,8 +178,17 @@ async function getRawFilters() {
     const filters = await sheet.getFiltersAsync();
     const filterMap = {};
     
+    // DANH SÁCH CÁC FILTER MUỐN BỎ QUA (BLACKLIST)
+    // Bạn có thể thêm bất kỳ filter nào không muốn gửi đi vào đây
+    const IGNORED_FILTERS = [
+        "Measure Names", 
+        "Metric Name Set", 
+        "Filter_Weekend" // <--- Thêm cái này vào
+    ];
+
     filters.forEach(f => {
-        if (f.fieldName !== "Measure Names" && f.fieldName !== "Metric Name Set") {
+        // Kiểm tra xem tên filter có nằm trong danh sách bị loại trừ không
+        if (!IGNORED_FILTERS.includes(f.fieldName)) {
              if (f.isAllSelected) {
                 filterMap[f.fieldName] = ["(All)"];
             } else {
